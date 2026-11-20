@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>THE GATE OF PROVADIA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #141210; color: #F4EFE6; }
+        canvas { display: block; }
+        #vignette { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: radial-gradient(circle, transparent 40%, rgba(20,18,16,0.8) 100%); z-index: 10; }
+        #fade-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 20; transition: opacity 2.6s ease-out; pointer-events: none; }
+        #ui-layer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; opacity: 0; transition: opacity 1s ease-in; font-family: 'Inter', sans-serif; }
+        .visible { opacity: 1 !important; }
+        #header { position: absolute; top: 5%; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+        #header h1 { font-family: 'Cinzel', serif; color: #FFEFC1; font-size: 2.5rem; letter-spacing: 0.3em; margin: 0; }
+        #header p { font-family: 'Cinzel', serif; color: #C9A227; font-size: 0.8rem; letter-spacing: 0.1em; margin-top: 0.5rem; }
+        #footer-left { position: absolute; bottom: 8%; left: 5%; }
+        #footer-left .title { font-family: 'Cinzel', serif; color: #FFEFC1; font-size: 1rem; margin-bottom: 0.2rem; }
+        #footer-left .stats { font-size: 0.8rem; opacity: 0.8; }
+        #footer-right { position: absolute; bottom: 8%; right: 5%; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; }
+        #flip-btn { position: absolute; bottom: 3%; left: 50%; transform: translateX(-50%); pointer-events: auto; background: transparent; border: 1px solid #C9A227; color: #FFEFC1; padding: 0.6rem 1.5rem; font-family: 'Inter', sans-serif; cursor: pointer; border-radius: 50px; transition: all 0.3s; font-size: 0.8rem; letter-spacing: 0.1em; }
+        #flip-btn:hover { background: #C9A227; color: #141210; }
+    </style>
+</head>
+<body>
+    <div id="vignette"></div>
+    <div id="fade-overlay"></div>
+    <div id="ui-layer">
+        <div id="header">
+            <h1>PROVADIA</h1>
+            <p>THE GATE &middot; EUROPE'S FIRST TOWN OF RECORD</p>
+        </div>
+        <div id="footer-left">
+            <div class="title">THE GOLDEN WALL</div>
+            <div class="stats">0 / 47 bricks laid &middot; one is waiting</div>
+        </div>
+        <div id="footer-right">TAP THE COIN</div>
+        <button id="flip-btn">FLIP THE COIN</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from './three.module.min.js';
+
+        const PALETTE = { bg: 0x141210, gold1: 0xC9A227, gold2: 0xFFEFC1, gold3: 0x6B4A12, gold4: 0x3D2A08, salt: 0xF4EFE6 };
+
+        let scene, camera, renderer, coin, coinGroup, flightCurve, clock;
+        let flipActive = false, flipRotation = 0;
+        let flightProgress = 0;
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(PALETTE.bg);
+            scene.fog = new THREE.FogExp2(PALETTE.bg, 0.028);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            document.body.appendChild(renderer.domElement);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            dirLight.position.set(-10, 15, 10);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x000000, 0.3);
+            scene.add(hemiLight);
+
+            const ember = new THREE.PointLight(PALETTE.gold1, 1.5, 10);
+            ember.position.set(0, 2, 2);
+            scene.add(ember);
+
+            // Ground
+            const groundGeo = new THREE.CircleGeometry(50, 64);
+            const groundMat = new THREE.MeshStandardMaterial({ color: PALETTE.bg });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.62;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Gate
+            const pillarGeo = new THREE.BoxGeometry(1.5, 8.6, 1.5);
+            const pillarMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            const trimMat = new THREE.MeshStandardMaterial({ color: PALETTE.gold1 });
+            
+            const createPillar = (x) => {
+                const g = new THREE.Group();
+                const p = new THREE.Mesh(pillarGeo, pillarMat);
+                p.castShadow = true;
+                g.add(p);
+                const trim = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 1.6), trimMat);
+                trim.position.y = 4.3;
+                g.add(trim);
+                g.position.set(x, 3.7, 7);
+                return g;
+            };
+            scene.add(createPillar(-4.1));
+            scene.add(createPillar(4.1));
+
+            const lintelGeo = new THREE.BoxGeometry(9.7, 0.8, 1.5);
+            const lintel = new THREE.Mesh(lintelGeo, pillarMat);
+            lintel.position.set(0, 8, 7);
+            lintel.castShadow = true;
+            scene.add(lintel);
+            const lintelTrim = new THREE.Mesh(new THREE.BoxGeometry(9.7, 0.1, 1.6), trimMat);
+            lintelTrim.position.set(0, 8.4, 7);
+            scene.add(lintelTrim);
+
+            // Coin
+            coinGroup = new THREE.Group();
+            coinGroup.position.set(0, 2.35, 0);
+            scene.add(coinGroup);
+
+            const coinGeo = new THREE.CylinderGeometry(2, 2, 0.36, 64);
+            const coinMat = new THREE.MeshStandardMaterial({ color: PALETTE.gold1, metalness: 0.8, roughness: 0.2 });
+            coin = new THREE.Mesh(coinGeo, coinMat);
+            coin.rotation.x = Math.PI / 2;
+            coin.castShadow = true;
+            coinGroup.add(coin);
+
+            // Coin Front Relief
+            const frontGroup = new THREE.Group();
+            frontGroup.position.z = 0.19;
+            coinGroup.add(frontGroup);
+            
+            for(let i=0; i<5; i++) {
+                const row = new THREE.Group();
+                for(let j=0; j<5; j++) {
+                    const b = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.1), trimMat);
+                    b.position.set(-0.6 + j*0.3, -0.6 + i*0.3, 0);
+                    row.add(b);
+                }
+                frontGroup.add(row);
+            }
+            for(let i=0; i<7; i++) {
+                const m = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.1), trimMat);
+                const angle = (Math.PI / 6) * i + (Math.PI/12);
+                m.position.set(Math.sin(angle)*1.6, Math.cos(angle)*1.6, 0);
+                m.rotation.z = angle + Math.PI/2;
+                frontGroup.add(m);
+            }
+            const rimGeo = new THREE.SphereGeometry(0.05, 8, 8);
+            for(let i=0; i<47; i++) {
+                const s = new THREE.Mesh(rimGeo, trimMat);
+                const angle = (Math.PI * 2 / 47) * i;
+                s.position.set(Math.cos(angle)*1.76, Math.sin(angle)*1.76, 0);
+                frontGroup.add(s);
+            }
+
+            // Coin Back
+            const backGroup = new THREE.Group();
+            backGroup.position.z = -0.19;
+            backGroup.rotation.y = Math.PI;
+            coinGroup.add(backGroup);
+            const disc = new THREE.Mesh(new THREE.CircleGeometry(1.2, 32), new THREE.MeshStandardMaterial({ color: PALETTE.gold2, emissive: PALETTE.gold3, emissiveIntensity: 0.2 }));
+            backGroup.add(disc);
+            for(let i=0; i<3; i++) {
+                const t = new THREE.Mesh(new THREE.TorusGeometry(0.5 + i*0.3, 0.05, 16, 64), trimMat);
+                t.position.z = -0.01;
+                backGroup.add(t);
+            }
+            for(let i=0; i<47; i++) {
+                const b = new THREE.Mesh(rimGeo, trimMat);
+                const angle = (Math.PI * 2 / 47) * i;
+                b.position.set(Math.cos(angle)*1.8, Math.sin(angle)*1.8, 0);
+                backGroup.add(b);
+            }
+
+            // Golden Wall
+            const wallGeo = new THREE.PlaneGeometry(27, 10.1);
+            const wallCanvas = document.createElement('canvas');
+            wallCanvas.width = 2048; wallCanvas.height = 768;
+            const ctx = wallCanvas.getContext('2d');
+            ctx.fillStyle = '#141210'; ctx.fillRect(0,0,2048,768);
+            ctx.strokeStyle = '#C9A22744'; ctx.lineWidth = 2;
+            for(let r=0; r<4; r++) {
+                let cols = r < 3 ? 12 : 11;
+                for(let c=0; c<cols; c++) {
+                    ctx.strokeRect(100 + c*150, 100 + r*160, 120, 130);
+                }
+            }
+            const wallTex = new THREE.CanvasTexture(wallCanvas);
+            const wallMat = new THREE.MeshStandardMaterial({ map: wallTex });
+            const wall = new THREE.Mesh(wallGeo, wallMat);
+            wall.position.set(0, 4.5, -8.5);
+            scene.add(wall);
+
+            const waitingBrick = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.3), new THREE.MeshBasicMaterial({ color: PALETTE.gold2, transparent: true, opacity: 0.5 }));
+            waitingBrick.position.set(-12 + 0.6, 4.5 + 0.65, -8.49);
+            scene.add(waitingBrick);
+            const brickEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.2, 1.3)), new THREE.LineBasicMaterial({ color: PALETTE.gold2 }));
+            brickEdges.position.copy(waitingBrick.position);
+            scene.add(brickEdges);
+            window.waitingBrick = { mesh: waitingBrick, edges: brickEdges };
+
+            // Salt Dust
+            const saltCanvas = document.createElement('canvas');
+            saltCanvas.width = 32; saltCanvas.height = 32;
+            const sctx = saltCanvas.getContext('2d');
+            const grad = sctx.createRadialGradient(16,16,0,16,16,16);
+            grad.addColorStop(0, 'rgba(244,239,230,1)');
+            grad.addColorStop(1, 'rgba(244,239,230,0)');
+            sctx.fillStyle = grad; sctx.fillRect(0,0,32,32);
+            const saltTex = new THREE.CanvasTexture(saltCanvas);
+            const saltGeo = new THREE.BufferGeometry();
+            const saltPos = new Float32Array(380 * 3);
+            for(let i=0; i<380*3; i++) saltPos[i] = (Math.random()-0.5)*40;
+            saltGeo.setAttribute('position', new THREE.BufferAttribute(saltPos, 3));
+            const saltMat = new THREE.PointsMaterial({ size: 0.15, map: saltTex, transparent: true, alphaTest: 0.1, color: PALETTE.salt });
+            const salt = new THREE.Points(saltGeo, saltMat);
+            scene.add(salt);
+            window.salt = salt;
+
+            // Camera Flight
+            flightCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, 2.35, 31),
+                new THREE.Vector3(0, 2.35, 7),
+                new THREE.Vector3(0, 2.35, 6.4)
+            ]);
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const shot = urlParams.get('shot');
+            if(shot !== null) flightProgress = parseFloat(shot);
+            else flightProgress = 0;
+
+            clock = new THREE.Clock();
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', (e) => { if(!flipActive && e.target.id !== 'flip-btn') triggerFlip(); });
+            document.getElementById('flip-btn').addEventListener('click', triggerFlip);
+
+            setTimeout(() => { document.getElementById('fade-overlay').style.opacity = '0'; }, 100);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function triggerFlip() {
+            if(flipActive) return;
+            flipActive = true;
+            flipRotation = Math.PI;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const elapsed = clock.getElapsedTime();
+
+            if(window.location.search.includes('?shot=')) {
+                // Frozen flight
+            } else {
+                flightProgress += delta / 10.5;
+                if(flightProgress > 1) flightProgress = 1;
+            }
+
+            const t = THREE.MathUtils.smoothstep(0, 1, flightProgress);
+            const pos = flightCurve.getPoint(t);
+            camera.position.copy(pos);
+            camera.lookAt(0, 2.35, 0);
+
+            if(flightProgress >= 1) {
+                camera.position.x += Math.sin(elapsed * 0.5) * 0.05;
+                camera.position.y += Math.cos(elapsed * 0.3) * 0.05;
+            }
+
+            if(flightProgress > 0.86) {
+                document.getElementById('ui-layer').classList.add('visible');
+            }
+
+            if(flipActive) {
+                const step = delta * 2.0; // roughly 1.5s total flip
+                coinGroup.rotation.y += step;
+                if(coinGroup.rotation.y >= Math.PI) {
+                    coinGroup.rotation.y = Math.PI;
+                    flipActive = false;
+                }
+            }
+
+            coinGroup.position.y = 2.35 + Math.sin(elapsed) * 0.05;
+            coinGroup.rotation.z = Math.sin(elapsed * 0.5) * 0.02;
+
+            if(window.waitingBrick) {
+                const s = Math.sin(elapsed * 2) * 0.5 + 0.5;
+                window.waitingBrick.mesh.material.opacity = 0.2 + s * 0.3;
+                window.waitingBrick.edges.material.opacity = 0.3 + s * 0.7;
+            }
+
+            if(window.salt) {
+                window.salt.position.y += delta * 0.1;
+                if(window.salt.position.y > 5) window.salt.position.y = -5;
+            }
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
